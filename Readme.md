@@ -9,7 +9,7 @@ We need only to run scripts that are noted with (Main script) comment: other scr
 - **email_sender.py** will be called to send email when find email addresses matched from “Config.conf” file.
 - **pyLogger.py** logs all errors or unexpected values if occurs during API run-time with the name of main script name + .log
 - **pyServiceNowAPI.py** Logs into ServiceNow, uses "requests" module for Http method.
-- **pyTenableAPI.py** Logs into tenable.sc, uses "requets" module for Http method.
+- **pyTenableAPI.py** Logs into tenable.sc, uses "requests" module for Http method.
 - **ReportCreator.py** (Main Script) tenable.sc vuln Report Creator.
 - **ReportDownloader.py** (Main Script) Download tenable.sc report results in SharePoint.
 - **ServiceNow_2_Tenable.sc.py** (Main Script) A custom tenable.sc Asset Data integration with ServiceNow.
