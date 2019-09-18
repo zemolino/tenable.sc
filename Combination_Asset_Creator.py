@@ -107,7 +107,7 @@ if __name__ == '__main__':
             'Likely cause is that the credentials to login into tenable.sc are incorrect', exc_info=True)
         closeexit(1)
 
-    # A sample combination includes asset list and asset name here called: "Combination Asset"
+    # A sample combination asset input includes "comb_asset_list" and combination asset name here named: "Combination Asset"
     comb_asset_Name = "Combination Asset"
     comb_asset_list = ['740', '741', '742', '743']
 
