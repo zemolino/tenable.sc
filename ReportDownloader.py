@@ -1,7 +1,7 @@
 '''-------------------------------------------------------------------------------
   Name:           ReportDownloader.py (Main Script)
 
-  Date:           16/09/2019
+  Updated:           21/01/2024
 
   Purpose:        Download Tenable.sc report results in SharePoint. 
 
@@ -41,282 +41,158 @@
 
 '''
 
-# import required python modules
-from configparser import ConfigParser
-from datetime import date, datetime, timedelta
+# Import required Python modules
 import os
 import time
 import sys
-import email_sender as email
-import getpass
-import struct
-from socket import inet_aton
+from configparser import ConfigParser
+from datetime import datetime
 import requests
-requests.packages.urllib3.disable_warnings()
-import json
 from pyLogger import Logger
-import email_sender as Email
+from pyTenableAPI import TenablescAPI
+from email_sender import Email
 
-# ===================================================================
-# --- Define Global Logging Variables
-# ===================================================================
+# Use constants for magic values
+GET_METHOD = 'GET'
+POST_METHOD = 'POST'
+COMPLETED_STATUS = 'Completed'
 
-# --- Prevent the creation of compiled import modules ---
+# Define global logging variables
 sys.dont_write_bytecode = True
-
-# --- Get location and name of script and store as variables ---
 scriptloc = os.path.join(os.path.dirname(os.path.realpath(__file__)), '')
-
-# What to save all files as (leave out file extension)
 scriptname = os.path.splitext(os.path.basename(__file__))[0]
 
-# --- Begin Logging Configuration Section ---
 # Initialize logging
-loginstance = Logger(scriptloc, scriptname)
-logger = loginstance.setup()
-
+log_instance = Logger(scriptloc, scriptname)
+logger = log_instance.setup()
 logger.info('Running on Python version {}'.format(sys.version))
 
-# ===================================================================
-# --- Global call to configuration file
-# ===================================================================
-
-# Path to configuration file
-configfile = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          'config.conf')
+# Global call to configuration file
+configfile = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.conf')
 config = ConfigParser(delimiters=('=', ','))
 config.read(configfile)
 
-# ===================================================================
-# --- Report Downloader
-# ===================================================================
+def handle_error(message, exit_code=1):
+    """Handle errors by logging the message and exiting with the specified code."""
+    logger.error(message, exc_info=True)
+    close_exit(exit_code)
 
-
-def report_downloader(SharePoint_path, cfiles):
-
-    # Lets get the list of reports parameters that we will be working with...
-    params={'startTime': cfiles, 'fields': 'name,type,status,finishTime'}
-
-    reports = sc.HTTPRequest('GET', 'report', data=params)
-                     
-
-    # Now we will work our way through the resulting dataset and attempt
-    # to download the reports if they meet the criteria.
-    for report in reports.json()['response']['usable']:
-
-
-        # We can only download completed reports, so we have no reason
-        # to even try to download anything that isn't in the completed
-        # status.
-        if report['status'] == 'Completed':
-
-        
-            try:
-                
-                # Now to actually download the report...
-                report_data = sc.HTTPRequest('POST', 'report/{0}/download'.format(report['id']),
-                                        data={'id': int(report['id'])})
-
-            except Exception:
-                # Log error and exit script
-                logger.error(
-                    'Failed to downlaod particular report Completed in SC')
-                logger.error(
-                    'Likely cause is that th report name is not exists!',
-                    exc_info=True)
-                closeexit(1)
-
-            # Report Folder name
-            report_Fldname = report['name']
-
-            # convert the the time to readable format
-            srv_timestamp = int(report['finishTime'])
-            local_time = time.localtime(srv_timestamp)
-            srv_finTime = (time.strftime("%Y-%m-%d-%H.%M", local_time))
-
-            # compute a report name.
-            report_name = '%s-%s.%s' % (report['name'], srv_finTime,
-                                        report['type'])
-
-            # create a dynamic report name followed by report path, like "D:\path to SharePoint\report name"
-            SharePoint_Fld_path = os.path.join(SharePoint_path, '%s' % report_Fldname)
-
-            # ===========================================================================
-            try:
-                # if the download path doesn't exist, we need to create it.
-                if not os.path.exists(SharePoint_Fld_path):
-                    logger.debug(
-                        'The report directory path does not exist. creating one: ' +
-                        SharePoint_Fld_path)
-                    os.makedirs(SharePoint_Fld_path)
-
-            except OSError:
-                print('Error: Creating directory. ' + SharePoint_Fld_path)
-                # Log error and exit script
-                logger.error('Failed creating a new report path directory. ')
-                logger.error(
-                    'Likely cause is that the server does not have access to create or not created already!',
-                    exc_info=True)
-                closeexit(1)
-
-            try:
-                # check if the download report file doesn't exist, it will add in the existing folder.
-                if not os.path.exists(os.path.join(SharePoint_Fld_path, report_name)):
-                    print('It is a new report file, creating...')
-
-                    # Write file content to SharePoint_Fld_path = "\\workspaces.example.com\sites\Shared
-                    # Documents\asset reports"
-                    with open(os.path.join(SharePoint_Fld_path, report_name), 'wb') as report_file:
-
-                        report_file.write(report_data.content)
-
-            except OSError:
-                print('Error: creating new report file. ' +
-                        os.path.join(SharePoint_Fld_path, report_name))
-                # Log error and exit script
-                logger.error('Failed creating a new report file. ')
-                logger.error(
-                    'Likely cause is that the server does not have access to create or not created already!',
-                    exc_info=True)
-                closeexit(1)
-
-        
-            # ===========================================================================
-            # Try to find and match the same report name and its value into
-            # tenable.sc report results
-            try:
-                # Create a list to insert the all report names
-                itemname = []
-
-                # Calling Configuration file to fetch "Emails" section items into a dictionary
-                email_dict = dict(config.items('Emails'))
-
-                for key in email_dict:
-                    if key.upper() == report['name'].upper():
-
-                        # If report name is not in the list of,
-                        # will sent an email to the particular person.
-                        if report_Fldname not in itemname:
-
-                            # Append to the list
-                            itemname.append(report['name'])
-                            itemvalue = email_dict[key]
-
-                            
-                            # Calling email sender file to send an email to the recipient
-                            Email.EmailSender(SharePoint_Fld_path, report_Fldname,
-                                            itemvalue, report_name)
-
-            except Exception:
-                # Log error and exit script
-                logger.error(
-                    'Failed to find a similar report name to send email')
-                logger.error(
-                    'Likely cause is that an input parameter is malformed!',
-                    exc_info=True)
-                closeexit(1)
-
-# ===================================================================
-# --- Exit status
-# ===================================================================
-
-
-def closeexit(exit_code):
-    """Function to handle exiting the script either cleanly or with an error
-    exit_code - 0 for clean exit, 1 for exiting due to script error
-    """
-
-    if exit_code == 0:  # Script completed without an error
-
+def close_exit(exit_code):
+    """Function to handle exiting the script either cleanly or with an error."""
+    if exit_code == 0:
         logger.info('Script complete')
-    else:  # Script had an error
+    else:
         logger.info('Exiting script due to an error')
-
-    # Cleanly close the logging files
-    # Function below comes from logging script
-    loginstance.closeHandlers()
+    log_instance.closeHandlers()
     sys.exit()
 
+def create_directory(directory_path):
+    """Create a directory if it doesn't exist."""
+    try:
+        if not os.path.exists(directory_path):
+            os.makedirs(directory_path)
+    except OSError:
+        handle_error('Failed creating a new directory: {}'.format(directory_path))
 
-# --------------------------------------------------------------------------------
-# --- MAIN body of the script. This is where the pieces come together
-# --------------------------------------------------------------------------------
+def download_report(sc, report_id):
+    """Download a report using the specified Tenable.sc instance and report ID."""
+    try:
+        return sc.HTTPRequest(POST_METHOD, 'report/{}/download'.format(report_id), data={'id': int(report_id)})
+    except Exception as e:
+        handle_error('Failed to download report (ID: {}) from Tenable.sc: {}'.format(report_id, e))
+
+def report_downloader(sharepoint_path, cfiles):
+    """Download reports from Tenable.sc and save them to the specified SharePoint path."""
+    try:
+        params = {'startTime': cfiles, 'fields': 'name,type,status,finishTime'}
+        reports = sc.HTTPRequest(GET_METHOD, 'report', data=params)
+    except Exception as e:
+        handle_error('Failed to fetch reports from Tenable.sc: {}'.format(e))
+
+    for report in reports.json()['response']['usable']:
+        if report['status'] == COMPLETED_STATUS:
+            try:
+                report_data = download_report(sc, report['id'])
+            except Exception:
+                handle_error('Failed to download report (ID: {}) from Tenable.sc'.format(report['id']))
+                close_exit(1)
+
+            report_folder_name = report['name']
+            srv_timestamp = int(report['finishTime'])
+            local_time = time.localtime(srv_timestamp)
+            srv_fin_time = time.strftime("%Y-%m-%d-%H.%M", local_time)
+            report_name = '{}-{}.{}'.format(report['name'], srv_fin_time, report['type'])
+            sharepoint_folder_path = os.path.join(sharepoint_path, report_folder_name)
+
+            create_directory(sharepoint_folder_path)
+
+            try:
+                report_file_path = os.path.join(sharepoint_folder_path, report_name)
+                if not os.path.exists(report_file_path):
+                    with open(report_file_path, 'wb') as report_file:
+                        report_file.write(report_data.content)
+            except OSError as e:
+                handle_error('Failed creating a new report file: {}'.format(report_file_path))
+
+            try:
+                email_reports(report_folder_name, report_name)
+            except Exception:
+                handle_error('Failed to send email for report: {}'.format(report['name']))
+
+def email_reports(report_folder_name, report_name):
+    """Send email for matching reports based on configuration."""
+    try:
+        email_dict = dict(config.items('Emails'))
+        for key in email_dict:
+            if key.upper() == report_folder_name.upper():
+                if report_folder_name not in itemname:
+                    itemname.append(report_folder_name)
+                    itemvalue = email_dict[key]
+                    Email.EmailSender(sharepoint_path, report_folder_name, itemvalue, report_name)
+    except Exception as e:
+        handle_error('Failed to send email for report: {}'.format(report_folder_name))
 
 if __name__ == '__main__':
-    
-    # Get credential data from "config.conf" file.
     sc_host = config.get('tenable.sc', 'sc_host')
     sc_username = config.get('tenable.sc', 'sc_username')
     sc_password = config.get('tenable.sc', 'sc_password')
 
-
     try:
-        #--- Connect to tenable.sc ---
-
-        # Create connection to tenable.sc server using variables.
-        # Results are returned as a series of dictionary objects within the 'SC' list variable
-        import pyTenableAPI
-        # This calls the credential function and passes it.
-        sc = pyTenableAPI.TenablescAPI(url=sc_host, username=sc_username, password=sc_password)
+        sc = TenablescAPI(url=sc_host, username=sc_username, password=sc_password)
         sc.LoginTenable()
-        print("Logged in successfully to tenable.sc!")
-
-    except Exception:
-        # Log error and exit script
-        logger.error('Failed to connect to tenable.sc server')
-        logger.error(
-            'Likely cause is that the credentials to login into tenable.sc are incorrect', exc_info=True)
-        closeexit(1)
+        print("Logged in successfully to Tenable.sc!")
+    except Exception as e:
+        handle_error('Failed to connect to Tenable.sc server: {}'.format(e))
 
     print("\nChecking out...")
 
-    # Path to download report in SharePoint
-    SharePoint_path = config.get('Reports', 'SharePoint_path')
-
-    # Get the last run value
-    Last_run = config.get('Reports', 'Last_run')
+    sharepoint_path = config.get('Reports', 'SharePoint_path')
+    last_run = config.get('Reports', 'Last_run')
 
     print("\n=====================\n")
 
-    if Last_run != "":
-
-        print("\nThe Last run date: ", Last_run)
-
-        # Convert date string to timestamps
-        dt_obj = datetime.strptime(Last_run, "%Y-%m-%d %H:%M:%S")
-        LastRunObj = time.mktime(dt_obj.timetuple())
-
-        # Call to check matching reports
-        report_downloader(SharePoint_path, LastRunObj)
-
-    elif Last_run == "":
-
+    if last_run != "":
+        print("\nThe Last run date: ", last_run)
+        dt_obj = datetime.strptime(last_run, "%Y-%m-%d %H:%M:%S")
+        last_run_obj = time.mktime(dt_obj.timetuple())
+        report_downloader(sharepoint_path, last_run_obj)
+    else:
         print("Looks there is no input for Last Run in 'config.conf' Insert one with"
               "a format of 2019-02-11 12:00:00")
+        last_run_input = config.set('Reports', 'Last_run', input('Last_run: '))
+        dt_obj = datetime.strptime(last_run_input, "%Y-%m-%d %H:%M:%S")
+        last_run_obj = time.mktime(dt_obj.timetuple())
+        report_downloader(sharepoint_path, last_run_obj)
 
-        # Looks there is no input for Last Run. Insert one with"
-        # a format of 2019-02-11 12: 00: 00
-        LastRunIn = config.set('Reports', 'Last_run', input('Last_run : '))
-
-        # Convert date string to timestamps
-        dt_obj = datetime.strptime(LastRunIn, "%Y-%m-%d %H:%M:%S")
-        LastRunObj = time.mktime(dt_obj.timetuple())
-
-
-        # Call to check matching reports
-        report_downloader(SharePoint_path, LastRunObj)
-
-    # Write the last ending time to Last_run
     print("Current time: ", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    CTime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    FileWrite = open('config.conf', 'w')
-    print("Last run before: ", config.get('Reports', 'Last_run'))
-    config.set('Reports', 'Last_run', '{}'.format(CTime))
-    config.write(FileWrite)
-    print("Last_run now: ", config.get('Reports', 'Last_run'))
-    FileWrite.close()
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    with open('config.conf', 'w') as file_write:
+        print("Last run before: ", config.get('Reports', 'Last_run'))
+        config.set('Reports', 'Last_run', '{}'.format(current_time))
+        config.write(file_write)
+        print("Last_run now: ", config.get('Reports', 'Last_run'))
 
-    # Close log file and exit script cleanly
-    closeexit(0)
+    close_exit(0)
 
     
