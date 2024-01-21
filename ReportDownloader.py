@@ -1,11 +1,13 @@
 '''-------------------------------------------------------------------------------
-  Name:           ReportDownloader.py (Main Script)
+Name:           ReportDownloader.py (Main Script)
 
-  Updated:           21/01/2024
+Date:           11/09/2019 
 
-  Purpose:        Download Tenable.sc report results in SharePoint. 
+Last update:    21/01/2024 
 
-  The following steps will be performed by the script:
+Purpose:        Download Tenable.sc report results in SharePoint. 
+
+The following steps will be performed by the script:
 
  
             1. Loop through all report results available after the last run - incremental report downloader -
