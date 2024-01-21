@@ -4,6 +4,8 @@ Name:           ServiceNow_2_Tenable.sc.py (Main Script)
 
 Date:           11/09/2019 
 
+Last update:    21/01/2024 
+
 Purpose:        A custom Tenable.sc Asset Data integration with ServiceNow.
 
 The following steps will be performed by the script:
