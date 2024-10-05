@@ -2,7 +2,9 @@
 '''-------------------------------------------------------------------------------
   Name:           ReportCreator.py (Main Script)
 
-  Date:           16/09/2019 (Updated)
+  Date:           16/09/2019
+
+  Last update:    05/10/2024
 
   Purpose:        Tenable SecurityCenter Report Creator
 
