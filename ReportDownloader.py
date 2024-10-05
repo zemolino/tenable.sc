@@ -3,7 +3,7 @@ Name:           ReportDownloader.py (Main Script)
 
 Date:           11/09/2019 
 
-Last update:    21/01/2024 
+Last update:    05/10/2024 
 
 Purpose:        Download Tenable.sc report results in SharePoint. 
 
@@ -54,147 +54,127 @@ from pyLogger import Logger
 from pyTenableAPI import TenablescAPI
 from email_sender import Email
 
-# Use constants for magic values
+# Constants for HTTP methods and report status
 GET_METHOD = 'GET'
 POST_METHOD = 'POST'
 COMPLETED_STATUS = 'Completed'
 
-# Define global logging variables
-sys.dont_write_bytecode = True
-scriptloc = os.path.join(os.path.dirname(os.path.realpath(__file__)), '')
-scriptname = os.path.splitext(os.path.basename(__file__))[0]
-
 # Initialize logging
-log_instance = Logger(scriptloc, scriptname)
-logger = log_instance.setup()
-logger.info('Running on Python version {}'.format(sys.version))
+sys.dont_write_bytecode = True
+script_location = os.path.join(os.path.dirname(os.path.realpath(__file__)), '')
+script_name = os.path.splitext(os.path.basename(__file__))[0]
 
-# Global call to configuration file
-configfile = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.conf')
+log_instance = Logger(script_location, script_name)
+logger = log_instance.setup()
+logger.info(f'Running on Python version {sys.version}')
+
+# Global configuration setup
+config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.conf')
 config = ConfigParser(delimiters=('=', ','))
-config.read(configfile)
+config.read(config_file)
 
 def handle_error(message, exit_code=1):
-    """Handle errors by logging the message and exiting with the specified code."""
+    """Log error messages and exit the script."""
     logger.error(message, exc_info=True)
     close_exit(exit_code)
 
 def close_exit(exit_code):
-    """Function to handle exiting the script either cleanly or with an error."""
-    if exit_code == 0:
-        logger.info('Script complete')
-    else:
-        logger.info('Exiting script due to an error')
+    """Exit script cleanly or with an error."""
     log_instance.closeHandlers()
-    sys.exit()
+    sys.exit(exit_code)
 
 def create_directory(directory_path):
     """Create a directory if it doesn't exist."""
-    try:
-        if not os.path.exists(directory_path):
+    if not os.path.exists(directory_path):
+        try:
             os.makedirs(directory_path)
-    except OSError:
-        handle_error('Failed creating a new directory: {}'.format(directory_path))
+        except OSError as e:
+            handle_error(f'Failed to create directory: {directory_path}, {e}')
 
 def download_report(sc, report_id):
-    """Download a report using the specified Tenable.sc instance and report ID."""
+    """Download a report from Tenable.sc."""
     try:
-        return sc.HTTPRequest(POST_METHOD, 'report/{}/download'.format(report_id), data={'id': int(report_id)})
+        return sc.HTTPRequest(POST_METHOD, f'report/{report_id}/download', data={'id': int(report_id)})
     except Exception as e:
-        handle_error('Failed to download report (ID: {}) from Tenable.sc: {}'.format(report_id, e))
+        handle_error(f'Failed to download report (ID: {report_id}): {e}')
 
-def report_downloader(sharepoint_path, cfiles):
-    """Download reports from Tenable.sc and save them to the specified SharePoint path."""
+def report_downloader(sharepoint_path, last_run_time):
+    """Download and save reports from Tenable.sc to SharePoint."""
     try:
-        params = {'startTime': cfiles, 'fields': 'name,type,status,finishTime'}
+        params = {'startTime': last_run_time, 'fields': 'name,type,status,finishTime'}
         reports = sc.HTTPRequest(GET_METHOD, 'report', data=params)
     except Exception as e:
-        handle_error('Failed to fetch reports from Tenable.sc: {}'.format(e))
+        handle_error(f'Failed to fetch reports from Tenable.sc: {e}')
 
-    for report in reports.json()['response']['usable']:
+    for report in reports.json().get('response', {}).get('usable', []):
         if report['status'] == COMPLETED_STATUS:
-            try:
-                report_data = download_report(sc, report['id'])
-            except Exception:
-                handle_error('Failed to download report (ID: {}) from Tenable.sc'.format(report['id']))
-                close_exit(1)
-
+            report_data = download_report(sc, report['id'])
             report_folder_name = report['name']
-            srv_timestamp = int(report['finishTime'])
-            local_time = time.localtime(srv_timestamp)
-            srv_fin_time = time.strftime("%Y-%m-%d-%H.%M", local_time)
-            report_name = '{}-{}.{}'.format(report['name'], srv_fin_time, report['type'])
-            sharepoint_folder_path = os.path.join(sharepoint_path, report_folder_name)
+            report_timestamp = int(report['finishTime'])
+            local_time = time.localtime(report_timestamp)
+            formatted_time = time.strftime("%Y-%m-%d-%H.%M", local_time)
+            report_filename = f'{report_folder_name}-{formatted_time}.{report["type"]}'
+            report_folder_path = os.path.join(sharepoint_path, report_folder_name)
 
-            create_directory(sharepoint_folder_path)
+            create_directory(report_folder_path)
 
             try:
-                report_file_path = os.path.join(sharepoint_folder_path, report_name)
+                report_file_path = os.path.join(report_folder_path, report_filename)
                 if not os.path.exists(report_file_path):
-                    with open(report_file_path, 'wb') as report_file:
-                        report_file.write(report_data.content)
+                    with open(report_file_path, 'wb') as file:
+                        file.write(report_data.content)
+                logger.info(f'Report saved: {report_file_path}')
             except OSError as e:
-                handle_error('Failed creating a new report file: {}'.format(report_file_path))
+                handle_error(f'Failed to save report: {report_file_path}, {e}')
 
             try:
-                email_reports(report_folder_name, report_name)
-            except Exception:
-                handle_error('Failed to send email for report: {}'.format(report['name']))
+                email_reports(report_folder_name, report_filename)
+            except Exception as e:
+                handle_error(f'Failed to send email for report: {report_folder_name}, {e}')
 
-def email_reports(report_folder_name, report_name):
-    """Send email for matching reports based on configuration."""
+def email_reports(report_folder_name, report_filename):
+    """Send an email notification for the downloaded reports."""
     try:
-        email_dict = dict(config.items('Emails'))
-        for key in email_dict:
-            if key.upper() == report_folder_name.upper():
-                if report_folder_name not in itemname:
-                    itemname.append(report_folder_name)
-                    itemvalue = email_dict[key]
-                    Email.EmailSender(sharepoint_path, report_folder_name, itemvalue, report_name)
+        email_recipients = dict(config.items('Emails'))
+        for service_name, recipient in email_recipients.items():
+            if service_name.upper() == report_folder_name.upper():
+                Email.EmailSender(sharepoint_path, report_folder_name, recipient, report_filename)
+                logger.info(f'Email sent for report: {report_filename}')
     except Exception as e:
-        handle_error('Failed to send email for report: {}'.format(report_folder_name))
+        handle_error(f'Failed to send email for report: {report_folder_name}, {e}')
 
 if __name__ == '__main__':
+    # Fetch Tenable.sc credentials from config
     sc_host = config.get('tenable.sc', 'sc_host')
     sc_username = config.get('tenable.sc', 'sc_username')
     sc_password = config.get('tenable.sc', 'sc_password')
 
+    # Initialize Tenable.sc API
     try:
         sc = TenablescAPI(url=sc_host, username=sc_username, password=sc_password)
         sc.LoginTenable()
-        print("Logged in successfully to Tenable.sc!")
+        logger.info("Successfully logged into Tenable.sc")
     except Exception as e:
-        handle_error('Failed to connect to Tenable.sc server: {}'.format(e))
-
-    print("\nChecking out...")
+        handle_error(f'Failed to connect to Tenable.sc: {e}')
 
     sharepoint_path = config.get('Reports', 'SharePoint_path')
     last_run = config.get('Reports', 'Last_run')
 
-    print("\n=====================\n")
-
-    if last_run != "":
-        print("\nThe Last run date: ", last_run)
-        dt_obj = datetime.strptime(last_run, "%Y-%m-%d %H:%M:%S")
-        last_run_obj = time.mktime(dt_obj.timetuple())
+    # Convert last run time
+    if last_run:
+        last_run_obj = time.mktime(datetime.strptime(last_run, "%Y-%m-%d %H:%M:%S").timetuple())
         report_downloader(sharepoint_path, last_run_obj)
     else:
-        print("Looks there is no input for Last Run in 'config.conf' Insert one with"
-              "a format of 2019-02-11 12:00:00")
-        last_run_input = config.set('Reports', 'Last_run', input('Last_run: '))
-        dt_obj = datetime.strptime(last_run_input, "%Y-%m-%d %H:%M:%S")
-        last_run_obj = time.mktime(dt_obj.timetuple())
+        logger.warning("No 'Last_run' in config. Please provide a valid date.")
+        last_run_input = input('Enter Last_run (format: YYYY-MM-DD HH:MM:SS): ')
+        last_run_obj = time.mktime(datetime.strptime(last_run_input, "%Y-%m-%d %H:%M:%S").timetuple())
         report_downloader(sharepoint_path, last_run_obj)
 
-    print("Current time: ", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # Update last run time in config
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    with open('config.conf', 'w') as file_write:
-        print("Last run before: ", config.get('Reports', 'Last_run'))
-        config.set('Reports', 'Last_run', '{}'.format(current_time))
-        config.write(file_write)
-        print("Last_run now: ", config.get('Reports', 'Last_run'))
+    config.set('Reports', 'Last_run', current_time)
+    with open(config_file, 'w') as config_write:
+        config.write(config_write)
+        logger.info(f'Updated Last_run to: {current_time}')
 
     close_exit(0)
-
-    
